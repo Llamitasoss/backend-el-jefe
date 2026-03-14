@@ -3,100 +3,84 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 
-// ¡ELIMINAMOS NODE-FETCH! Tu versión de Node.js (v22) ya lo trae integrado de fábrica.
-
 const app = express();
 
 // Configuración de seguridad y formato
-app.use(cors()); // Permite que tu frontend en GitHub se comunique con este servidor
-app.use(express.json()); // Permite entender los datos en formato JSON
+app.use(cors()); 
+app.use(express.json()); 
+
+// Función mágica para "pausar" el servidor si Google nos bloquea temporalmente
+const esperar = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Ruta principal de la IA
 app.post('/api/chat', async (req, res) => {
     try {
-        // 1. Leer la llave secreta desde el archivo .env (o variables de Render)
         const API_KEY = process.env.GEMINI_API_KEY; 
         
         if (!API_KEY) {
-            console.error("Falta la API Key de Gemini en las variables de entorno.");
-            return res.status(500).json({ error: "Configuración del servidor incompleta." });
+            return res.status(500).json({ error: "Falta la configuración de Google." });
         }
 
-        // 2. Preparar la URL de Google Gemini
         const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
 
-        // 3. Extraer lo que nos manda el panel web o el catálogo
-        const { contents, systemInstruction, generationConfig } = req.body;
+        // Armar el paquete
+        const payload = { contents: req.body.contents };
+        if (req.body.systemInstruction) payload.systemInstruction = req.body.systemInstruction;
+        if (req.body.generationConfig) payload.generationConfig = req.body.generationConfig;
 
-        // 4. Armar el paquete exacto para Google
-        const payload = {
-            contents: contents
-        };
-        
-        // Si el frontend pide instrucciones especiales, se las agregamos y MEJORAMOS
-        if (systemInstruction) {
-            
-            // INYECCIÓN DE INTELIGENCIA PREDICTIVA: 
-            // Forzamos a Gemini a ser más tolerante a errores ortográficos y a conectar conceptos lógicos.
-            const directivaPredictiva = `
-            
-=== DIRECTIVA MAESTRA DE PREDICCIÓN Y TOLERANCIA A ERRORES ===
-1. IGNORA ERRORES ORTOGRÁFICOS Y DE TIPEO: Si el usuario escribe "afinacion", "afnacion", "amrtiguador", "llantaa", etc., deduce la palabra correcta.
-2. CONECTA CONCEPTOS: Si el usuario pide un "kit de afinación", busca productos que tengan "afinacion" en su Categoría, o que incluyan aceites y bujías. Si piden "frenos", busca "balatas" o "zapatas".
-3. RELACIONA MODELOS FLEXIBLEMENTE: "DM 200", "DM200", "para la 200 DM" significan exactamente lo mismo. Revisa las cadenas de texto buscando coincidencias parciales.
-4. ANÁLISIS PROFUNDO: NUNCA digas que no hay inventario sin antes revisar cruzando el Nombre, Categoría, Especificaciones y Compatibilidad del catálogo provisto.
-==============================================================`;
-            
-            // Agregamos nuestra directiva maestra al final de las instrucciones de la página
-            if (systemInstruction.parts && systemInstruction.parts.length > 0) {
-                systemInstruction.parts[0].text += directivaPredictiva;
+        // ==========================================
+        // SISTEMA ANTI-COLAPSO (MANEJO DE CUOTA)
+        // ==========================================
+        let intentosMaximos = 3;
+        let respuestaExitosa = null;
+
+        while (intentosMaximos > 0 && !respuestaExitosa) {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.status === 429) {
+                // Error 429: Límite de 20 consultas por minuto de Google
+                console.log(`⚠️ Límite de cuota detectado. Pausando el servidor 15 segundos... (Quedan ${intentosMaximos - 1} intentos)`);
+                await esperar(15000); // Se queda calladito 15 segundos y vuelve a intentar
+                intentosMaximos--;
+            } else if (!response.ok) {
+                const errorData = await response.text();
+                throw new Error(`Error de Google ${response.status}: ${errorData}`);
+            } else {
+                respuestaExitosa = await response.json();
             }
-            payload.systemInstruction = systemInstruction;
         }
 
-        if (generationConfig) payload.generationConfig = generationConfig;
-
-        // 5. Enviar la petición a Google (Usando el fetch nativo)
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        // Revisar si Google devolvió algún error
-        if (!response.ok) {
-            const errorData = await response.text();
-            throw new Error(`Google respondió con error ${response.status}: ${errorData}`);
+        // Si después de esperar 3 veces sigue bloqueado, le avisamos a tu Panel amablemente
+        if (!respuestaExitosa) {
+            return res.status(429).json({ error: "QUOTA_EXCEEDED" });
         }
 
-        // 6. Recibir la respuesta exitosa y mandarla de vuelta a tu página web
-        const data = await response.json();
-        res.json(data); 
+        res.json(respuestaExitosa); 
         
     } catch (error) {
-        console.error("Error procesando la solicitud:", error.message);
-        res.status(500).json({ error: "Ocurrió un error en el servidor al contactar a la IA." });
+        console.error("Error procesando solicitud:", error.message);
+        res.status(500).json({ error: "Error en el servidor." });
     }
 });
-// Ruta para verificar el PIN de acceso al panel
+
+// Ruta para el PIN secreto
 app.post('/api/login', (req, res) => {
     const { pin } = req.body;
-    // Lee el PIN desde el archivo .env. Si no lo encuentra, usa uno de emergencia.
     const PIN_SECRETO = process.env.ADMIN_PIN || "0000"; 
 
-    if (pin === PIN_SECRETO) {
-        res.json({ success: true });
-    } else {
-        res.status(401).json({ success: false, error: "PIN incorrecto" });
-    }
-});
-// Ruta de prueba para saber si el servidor está "despierto"
-app.get('/', (req, res) => {
-    res.send("¡El servidor de El Jefe está activo y listo!");
+    if (pin === PIN_SECRETO) res.json({ success: true });
+    else res.status(401).json({ success: false, error: "PIN incorrecto" });
 });
 
-// Iniciar el servidor
+app.get('/', (req, res) => {
+    res.send("¡Servidor de El Jefe activo, protegido y con plan Starter!");
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Servidor de El Jefe activo y escuchando en el puerto ${PORT}`);
+    console.log(`Servidor activo y escuchando en el puerto ${PORT}`);
 });
