@@ -78,7 +78,18 @@ app.post('/api/chat', async (req, res) => {
         res.status(500).json({ error: "Ocurrió un error en el servidor al contactar a la IA." });
     }
 });
+// Ruta para verificar el PIN de acceso al panel
+app.post('/api/login', (req, res) => {
+    const { pin } = req.body;
+    // Lee el PIN desde el archivo .env. Si no lo encuentra, usa uno de emergencia.
+    const PIN_SECRETO = process.env.ADMIN_PIN || "0000"; 
 
+    if (pin === PIN_SECRETO) {
+        res.json({ success: true });
+    } else {
+        res.status(401).json({ success: false, error: "PIN incorrecto" });
+    }
+});
 // Ruta de prueba para saber si el servidor está "despierto"
 app.get('/', (req, res) => {
     res.send("¡El servidor de El Jefe está activo y listo!");
