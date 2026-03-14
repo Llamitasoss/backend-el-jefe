@@ -33,8 +33,27 @@ app.post('/api/chat', async (req, res) => {
             contents: contents
         };
         
-        // Si el frontend pide instrucciones especiales (prompt) o formato JSON, se lo agregamos
-        if (systemInstruction) payload.systemInstruction = systemInstruction;
+        // Si el frontend pide instrucciones especiales, se las agregamos y MEJORAMOS
+        if (systemInstruction) {
+            
+            // INYECCIÓN DE INTELIGENCIA PREDICTIVA: 
+            // Forzamos a Gemini a ser más tolerante a errores ortográficos y a conectar conceptos lógicos.
+            const directivaPredictiva = `
+            
+=== DIRECTIVA MAESTRA DE PREDICCIÓN Y TOLERANCIA A ERRORES ===
+1. IGNORA ERRORES ORTOGRÁFICOS Y DE TIPEO: Si el usuario escribe "afinacion", "afnacion", "amrtiguador", "llantaa", etc., deduce la palabra correcta.
+2. CONECTA CONCEPTOS: Si el usuario pide un "kit de afinación", busca productos que tengan "afinacion" en su Categoría, o que incluyan aceites y bujías. Si piden "frenos", busca "balatas" o "zapatas".
+3. RELACIONA MODELOS FLEXIBLEMENTE: "DM 200", "DM200", "para la 200 DM" significan exactamente lo mismo. Revisa las cadenas de texto buscando coincidencias parciales.
+4. ANÁLISIS PROFUNDO: NUNCA digas que no hay inventario sin antes revisar cruzando el Nombre, Categoría, Especificaciones y Compatibilidad del catálogo provisto.
+==============================================================`;
+            
+            // Agregamos nuestra directiva maestra al final de las instrucciones de la página
+            if (systemInstruction.parts && systemInstruction.parts.length > 0) {
+                systemInstruction.parts[0].text += directivaPredictiva;
+            }
+            payload.systemInstruction = systemInstruction;
+        }
+
         if (generationConfig) payload.generationConfig = generationConfig;
 
         // 5. Enviar la petición a Google (Usando el fetch nativo)
