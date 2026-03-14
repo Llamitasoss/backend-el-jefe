@@ -2,7 +2,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch'); // Usando node-fetch@2
+
+// ¡ELIMINAMOS NODE-FETCH! Tu versión de Node.js (v22) ya lo trae integrado de fábrica.
 
 const app = express();
 
@@ -36,7 +37,7 @@ app.post('/api/chat', async (req, res) => {
         if (systemInstruction) payload.systemInstruction = systemInstruction;
         if (generationConfig) payload.generationConfig = generationConfig;
 
-        // 5. Enviar la petición a Google
+        // 5. Enviar la petición a Google (Usando el fetch nativo)
         const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
