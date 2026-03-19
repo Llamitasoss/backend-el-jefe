@@ -1,86 +1,61 @@
-// Importar librerías necesarias
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 
-// Configuración de seguridad y formato
+// Middlewares
 app.use(cors()); 
-app.use(express.json()); 
+app.use(express.json());
 
-// Función mágica para "pausar" el servidor si Google nos bloquea temporalmente
-const esperar = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// Inicializa Gemini con tu clave segura
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Ruta principal de la IA
-app.post('/api/chat', async (req, res) => {
-    try {
-        const API_KEY = process.env.GEMINI_API_KEY; 
-        
-        if (!API_KEY) {
-            return res.status(500).json({ error: "Falta la configuración de Google." });
-        }
+app.post('/api/procesar-matriz', async (req, res) => {
+  const { textoProveedor, marcaSeleccionada } = req.body;
 
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
+  if (!textoProveedor) {
+    return res.status(400).json({ error: 'Falta el texto a procesar' });
+  }
 
-        // Armar el paquete
-        const payload = { contents: req.body.contents };
-        if (req.body.systemInstruction) payload.systemInstruction = req.body.systemInstruction;
-        if (req.body.generationConfig) payload.generationConfig = req.body.generationConfig;
+  try {
+    // AQUÍ ESTÁ LA MAGIA: Llamando al motor de razonamiento 2.5
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-        // ==========================================
-        // SISTEMA ANTI-COLAPSO (MANEJO DE CUOTA)
-        // ==========================================
-        let intentosMaximos = 3;
-        let respuestaExitosa = null;
+    const prompt = `
+      Eres un experto en refacciones de motocicletas. 
+      Analiza el siguiente texto comprimido de un proveedor y extrae los modelos y años.
+      
+      Reglas estrictas:
+      1. Devuelve ÚNICAMENTE un arreglo JSON válido. Nada de texto extra, ni saludos, ni formato markdown (\`\`\`json).
+      2. Cada objeto debe tener exactamente estas propiedades: 
+         - "marca": usa "${marcaSeleccionada || 'ITALIKA'}"
+         - "modelo": solo letras y números limpios, en mayúsculas. Ignora números de lista pegados al inicio (ej. si dice "1RC200" debe ser "RC200").
+         - "cilindraje": infiérelo del modelo si es evidente (ej. "RC200" -> "200CC", "DM250" -> "250CC", "FT125" -> "125CC"). Si no se puede deducir, pon "N/A".
+         - "años": un arreglo de strings con los años ordenados de menor a mayor (ej. ["2020", "2021", "2022"]).
+         - "tipo": pon "N/A".
 
-        while (intentosMaximos > 0 && !respuestaExitosa) {
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
+      Texto a analizar:
+      "${textoProveedor}"
+    `;
 
-            if (response.status === 429) {
-                // Error 429: Límite de 20 consultas por minuto de Google
-                console.log(`⚠️ Límite de cuota detectado. Pausando el servidor 15 segundos... (Quedan ${intentosMaximos - 1} intentos)`);
-                await esperar(15000); // Se queda calladito 15 segundos y vuelve a intentar
-                intentosMaximos--;
-            } else if (!response.ok) {
-                const errorData = await response.text();
-                throw new Error(`Error de Google ${response.status}: ${errorData}`);
-            } else {
-                respuestaExitosa = await response.json();
-            }
-        }
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text();
+    
+    // Limpiamos la respuesta de la IA
+    const jsonLimpio = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+    const datosEstructurados = JSON.parse(jsonLimpio);
 
-        // Si después de esperar 3 veces sigue bloqueado, le avisamos a tu Panel amablemente
-        if (!respuestaExitosa) {
-            return res.status(429).json({ error: "QUOTA_EXCEEDED" });
-        }
+    res.json(datosEstructurados);
 
-        res.json(respuestaExitosa); 
-        
-    } catch (error) {
-        console.error("Error procesando solicitud:", error.message);
-        res.status(500).json({ error: "Error en el servidor." });
-    }
-});
-
-// Ruta para el PIN secreto
-app.post('/api/login', (req, res) => {
-    const { pin } = req.body;
-    const PIN_SECRETO = process.env.ADMIN_PIN || "0000"; 
-
-    if (pin === PIN_SECRETO) res.json({ success: true });
-    else res.status(401).json({ success: false, error: "PIN incorrecto" });
-});
-
-app.get('/', (req, res) => {
-    res.send("¡Servidor de El Jefe activo, protegido y con plan Starter!");
+  } catch (error) {
+    console.error("Error procesando con IA:", error);
+    res.status(500).json({ error: 'Fallo al procesar el texto con Gemini 2.5' });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Servidor activo y escuchando en el puerto ${PORT}`);
+  console.log(`✅ Servidor backend de IA corriendo en el puerto ${PORT}`);
 });
