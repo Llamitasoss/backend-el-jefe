@@ -7,7 +7,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Inicializa Gemini. Si no hay llave, tiramos un log claro, no un crash silencioso.
+// Inicializa Gemini. Si no hay llave, tiramos un log claro.
 if (!process.env.GEMINI_API_KEY) {
     console.error("⚠️ ALERTA CRÍTICA: No se encontró GEMINI_API_KEY en las variables de entorno.");
 }
@@ -16,12 +16,11 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 // Función utilitaria para extraer JSON seguro
 const extractJSON = (text) => {
     try {
-        // Busca todo lo que esté entre corchetes []
         const match = text.match(/\[[\s\S]*\]/);
         if (match) {
             return JSON.parse(match[0]);
         }
-        return JSON.parse(text); // Intento directo
+        return JSON.parse(text); 
     } catch (e) {
         throw new Error("El texto de la IA no contiene un JSON válido.");
     }
@@ -44,7 +43,7 @@ app.post('/api/generar-caracteristicas', async (req, res) => {
     Devuelve SOLO las características, un punto por renglón. NO uses viñetas (*, -, •).`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-1.5-flash', // <--- CAMBIO AQUÍ (1,500 peticiones diarias gratis)
       contents: promptRefacciones,
     });
 
@@ -85,11 +84,10 @@ app.post('/api/procesar-matriz', async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-1.5-flash', // <--- CAMBIO AQUÍ (1,500 peticiones diarias gratis)
       contents: promptMatriz,
     });
 
-    // Usamos el extractor seguro que ignora basura al inicio o final del texto
     const data = extractJSON(response.text);
     res.status(200).json(data);
 
