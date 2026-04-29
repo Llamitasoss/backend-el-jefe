@@ -84,9 +84,9 @@ app.post('/api/procesar-matriz', async (req, res) => {
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash', // <--- CAMBIO AQUÍ (1,500 peticiones diarias gratis)
-      contents: promptMatriz,
-    });
+    model: 'gemini-2.0-flash', // <--- EL NUEVO MODELO ESTABLE CON 1500 PETICIONES/DÍA
+    contents: promptMatriz, // (o promptRefacciones)
+});
 
     const data = extractJSON(response.text);
     res.status(200).json(data);
