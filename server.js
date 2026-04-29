@@ -7,47 +7,41 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Inicializa Gemini con la llave de tu archivo .env
+// Inicializa Gemini. Si no hay llave, tiramos un log claro, no un crash silencioso.
+if (!process.env.GEMINI_API_KEY) {
+    console.error("⚠️ ALERTA CRÍTICA: No se encontró GEMINI_API_KEY en las variables de entorno.");
+}
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// ============================================================================
-// 1. ENDPOINT: PRUEBA BÁSICA
-// ============================================================================
-app.post('/api/generar', async (req, res) => {
-  try {
-    const prompt = req.body.prompt || "Hola";
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-    });
-    res.json({ result: response.text });
-  } catch (error) {
-    console.error("Error en Gemini:", error);
-    res.status(500).json({ error: "Error interno del servidor" });
-  }
-});
+// Función utilitaria para extraer JSON seguro
+const extractJSON = (text) => {
+    try {
+        // Busca todo lo que esté entre corchetes []
+        const match = text.match(/\[[\s\S]*\]/);
+        if (match) {
+            return JSON.parse(match[0]);
+        }
+        return JSON.parse(text); // Intento directo
+    } catch (e) {
+        throw new Error("El texto de la IA no contiene un JSON válido.");
+    }
+};
 
 // ============================================================================
-// 2. ENDPOINT: GENERADOR DE CARACTERÍSTICAS
+// ENDPOINT: GENERADOR DE CARACTERÍSTICAS
 // ============================================================================
 app.post('/api/generar-caracteristicas', async (req, res) => {
   try {
     const { nombre, categoria, sistema } = req.body;
-
-    if (!nombre) {
-      return res.status(400).json({ error: "Falta el nombre del producto" });
-    }
+    if (!nombre) return res.status(400).json({ error: "Falta el nombre del producto" });
 
     const promptRefacciones = `Actúa como un vendedor experto en refacciones de motocicletas. 
-    Genera exactamente 4 características técnicas y atractivas para el siguiente producto que se subirá a un catálogo web:
+    Genera exactamente 4 características técnicas y atractivas para el siguiente producto:
     - Producto: ${nombre}
     - Categoría: ${categoria || 'General'}
     - Sistema: ${sistema || 'General'}
     
-    REGLAS ESTRICTAS:
-    1. Devuelve SOLO las características, un punto por renglón.
-    2. NO uses viñetas (*, -, •), ni números al principio de las oraciones.
-    3. Sé conciso, profesional y directo.`;
+    Devuelve SOLO las características, un punto por renglón. NO uses viñetas (*, -, •).`;
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
@@ -59,40 +53,34 @@ app.post('/api/generar-caracteristicas', async (req, res) => {
 
   } catch (error) {
     console.error("Error al generar características:", error);
-    res.status(500).json({ error: "Error interno al generar características" });
+    res.status(500).json({ error: error.message || "Error interno al generar características" });
   }
 });
 
 // ============================================================================
-// 3. ENDPOINT: ORQUESTADOR DE EXTRACCIÓN (MATRIZ DE COMPATIBILIDAD)
+// ENDPOINT: ORQUESTADOR DE EXTRACCIÓN (MATRIZ DE COMPATIBILIDAD)
 // ============================================================================
 app.post('/api/procesar-matriz', async (req, res) => {
   try {
     const { textoProveedor, marcaSeleccionada } = req.body;
-
-    if (!textoProveedor) {
-      return res.status(400).json({ error: "No se proporcionó texto para analizar" });
-    }
+    if (!textoProveedor) return res.status(400).json({ error: "No se proporcionó texto" });
 
     const promptMatriz = `
-      Actúa como un analista experto en datos de motocicletas. 
       Analiza el siguiente texto y extrae TODAS las motocicletas y sus años compatibles.
-      ATENCIÓN: El texto puede tener errores de formato, faltas de ortografía o números pegados (ejemplo: "20152TRN150" significa que un modelo termina en el año 2015, y el siguiente modelo es TRN150). Usa tu lógica para separar las palabras y los años.
+      El texto tiene números pegados (ej: "20152TRN150" significa fin en 2015, sigue TRN150). Sepáralos.
       
-      REGLAS ESTRICTAS:
-      1. Devuelve ÚNICAMENTE un arreglo JSON puro. NADA de texto adicional, NADA de explicaciones, NADA de formato markdown (\`\`\`json).
-      2. Si el texto indica que es una pieza "universal" o "para cualquier moto", devuelve: [{"universal": true}]
-      3. Formato exacto de cada objeto en el JSON:
+      Devuelve ÚNICAMENTE un arreglo JSON. NADA MÁS.
+      Formato exacto:
       [
         {
           "marca": "${marcaSeleccionada || 'ITALIKA'}",
-          "modelo": "string en mayúsculas (ej. FT150, CARGO 150)",
-          "cilindraje": "string en mayúsculas (ej. 150CC) o dejar como 'N/A' si no se menciona",
-          "años": ["string"] (ej. ["2020", "2021", "2022"]. Si el texto dice "2020-2022", debes incluir todos los años intermedios en el array)
+          "modelo": "string en mayúsculas",
+          "cilindraje": "string en mayúsculas o 'N/A'",
+          "años": ["string"] (Si dice "2020-2022", incluye todos los años intermedios)
         }
       ]
       
-      TEXTO A ANALIZAR: 
+      TEXTO: 
       "${textoProveedor}"
     `;
 
@@ -101,25 +89,15 @@ app.post('/api/procesar-matriz', async (req, res) => {
       contents: promptMatriz,
     });
 
-    let jsonText = response.text;
-    
-    // Limpieza de seguridad: Quitamos markdown residual si Gemini decide ponerlo
-    jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
-
-    // Intentamos convertir el texto a un objeto JSON real
-    const data = JSON.parse(jsonText);
-    
-    // Enviamos el resultado al panel web
+    // Usamos el extractor seguro que ignora basura al inicio o final del texto
+    const data = extractJSON(response.text);
     res.status(200).json(data);
 
   } catch (error) {
     console.error("Error en el Extractor de Matriz:", error);
-    res.status(500).json({ error: "Fallo al estructurar los datos con IA" });
+    res.status(500).json({ error: error.message || "Fallo al estructurar los datos con IA" });
   }
 });
 
-// ============================================================================
-// INICIO DEL SERVIDOR
-// ============================================================================
 const port = process.env.PORT || 3000;
 app.listen(port, '0.0.0.0', () => console.log(`Servidor Omnicanal corriendo en puerto ${port}`));
